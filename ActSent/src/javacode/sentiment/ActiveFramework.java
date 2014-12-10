@@ -5,14 +5,17 @@ import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Scanner;
+import java.util.Set;
 
 import javacode.calcmatrix.ComputeLMatrix;
 
 import org.la4j.matrix.Matrix;
 import org.la4j.matrix.sparse.CRSMatrix;
 import org.la4j.vector.Vector;
+import org.la4j.vector.dense.BasicVector;
 import org.la4j.vector.sparse.CompressedVector;
 
 public class ActiveFramework {
@@ -69,19 +72,36 @@ public class ActiveFramework {
 		for (int i = 1; i <= numOfMessage; ++i) {
 			allTweetNum.add(i);
 		}
-		// System.out.println(numOfMessage);
+		double[] init_w = new double[numOfFeats];
+		for (int i = 0; i < numOfFeats; ++i) {
+			init_w[i] = 1.0 / numOfFeats;
+		}
+		w1 = new BasicVector(init_w);
+		w2 = new BasicVector(init_w);
+	}
+
+	public double[] getScores() {
+		return scores;
 	}
 
 	public List<List<Integer>> getTweets() {
 		return tweets;
 	}
-	
+
 	public Vector getW1() {
 		return w1;
 	}
 
 	public Vector getW2() {
 		return w2;
+	}
+
+	public Matrix getTrainX() {
+		return trainX;
+	}
+
+	public Vector getTrainY() {
+		return trainY;
 	}
 
 	public void constuctTrain(int[] rows) {
@@ -100,36 +120,39 @@ public class ActiveFramework {
 		for (int i = 0; i < num; ++i) {
 			List<Integer> tmp = tweets.get(rows[i]);
 			for (Integer in : tmp) {
-				trainX.set(rows[i], in, 1.0);
+				trainX.set(rows[i] + 1, in, 1.0);
 			}
-			trainY.set(rows[i], labels[rows[i]]);
+			trainY.set(rows[i] + 1, labels[rows[i]]);
 		}
 	}
 
 	public void addOneInstance(int index) {
 		List<Integer> tmp = tweets.get(index);
 		for (Integer in : tmp) {
-			trainX.set(index, in, 1.0);
+			trainX.set(index + 1, in, 1.0);
 		}
-		trainY.set(index, labels[index]);
+		trainY.set(index + 1, labels[index]);
 	}
 
-	public void LSRidge(double lambda, int iter) {
+	public void LSRidge(double lambda, int iter, double ita) {
 		// Matrix tmp = trainX.multiply(trainX.transpose()).add(lambda);
 		// MatrixInverter inverter =
 		// tmp.withInverter(LinearAlgebra.GAUSS_JORDAN);
 		// Matrix inv = inverter.inverse(LinearAlgebra.DENSE_FACTORY);
 		// Vector w = inv.multiply(trainX.transpose()).multiply(trainY);
 		// return w;
-		for (int i = 0; i < iter; ++i) {
-			Vector tmp1 = trainX.multiply(trainX.transpose()).multiply(w1);
+		for (int i = 0; i < 70; ++i) {
+			System.out.println("Linear regression interation: " + (i + 1));
+			Vector tmp1 = trainX.transpose().multiply(trainX).multiply(w1);
+			System.out.println("    tmp1 complet " + tmp1.length());
 			Vector tmp2 = trainX.transpose().multiply(trainY);
 			Vector tmp3 = w1.multiply(lambda);
-			w1 = tmp1.subtract(tmp2).add(tmp3);
+			w1 = tmp1.subtract(tmp2).add(tmp3).multiply(ita).add(w1);
 		}
 	}
 
-	public void LSLap(Matrix L, double lambdaR, double lambdaL, int iter) {
+	public void LSLap(Matrix L, double lambdaR, double lambdaL, int iter,
+			double ita) {
 		// Matrix tmp1 = trainX.multiply(trainX.transpose());
 		// Matrix tmp2 = trainX.multiply(L).multiply(trainX.transpose())
 		// .multiply(lambdaL);
@@ -139,12 +162,17 @@ public class ActiveFramework {
 		// Matrix inv = inverter.inverse(LinearAlgebra.DENSE_FACTORY);
 		// Vector w = inv.multiply(trainX.transpose()).multiply(trainY);
 		// return w;
-		for (int i = 0; i < iter; ++i) {
-			Vector tmp1 = trainX.multiply(trainX.transpose()).multiply(w2);
+		for (int i = 0; i < 70; ++i) {
+			System.out.println("Linear regression with Laplace interation: "
+					+ (i + 1));
+			// System.out.println(trainX.columns() + " " + trainX.rows());
+			Vector tmp1 = trainX.transpose().multiply(trainX).multiply(w2);
+			System.out.println("    tmp1 complet " + tmp1.length());
 			Vector tmp2 = trainX.transpose().multiply(trainY);
 			Vector tmp3 = w2.multiply(lambdaR);
-			Vector tmp4 = trainX.multiply(L).multiply(trainX.transpose()).multiply(w2);
-			w1 = tmp1.subtract(tmp2).add(tmp3).add(tmp4);
+			Vector tmp4 = trainX.transpose().multiply(L).multiply(trainX)
+					.multiply(w2);
+			w2 = tmp1.subtract(tmp2).add(tmp3).add(tmp4).multiply(ita).add(w2);
 		}
 	}
 
@@ -191,7 +219,6 @@ public class ActiveFramework {
 	}
 
 	public int[] selectScore(String pagerankFile, int[] init, int num) {
-		preprocess(init);
 		int[] ranking = new int[num];
 		scores = new double[numOfMessage];
 		Scanner scan = null;
@@ -211,6 +238,7 @@ public class ActiveFramework {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+		preprocess(init);
 
 		// ranking index is from 0, so it can be used directly to extract tweets
 		for (int i = 0; i < num; ++i) {
@@ -232,6 +260,38 @@ public class ActiveFramework {
 		return pred;
 	}
 
+	private int predict(int index) {
+		List<Integer> feat = tweets.get(index);
+		double sum = 0.0;
+		for (Integer i : feat) {
+			sum += w2.get(i - 1);
+		}
+		int pred = 0;
+		if (sum >= 0.5) {
+			pred = 1;
+		}
+		return pred;
+	}
+	
+	public double evaluate(int[] a1, int[] a2) {
+		Set<Integer> tmpSet = new HashSet<Integer>();
+		double accuracy = 0.0;
+		for (int i : a1) {
+			tmpSet.add(i);
+		}
+		for (int i : a2) {
+			tmpSet.add(i);
+		}
+		for (int i = 0; i < numOfMessage; ++i) {
+			if (!tmpSet.contains(i)) {
+				if (labels[i] == predict(i)) {
+					accuracy += 1.0;
+				}
+			}
+		}
+		return accuracy/600;
+	}
+
 	public static void main(String[] args) {
 		ComputeLMatrix clm = new ComputeLMatrix();
 		clm.calLMatrix();
@@ -240,14 +300,22 @@ public class ActiveFramework {
 		ActiveFramework aframe = new ActiveFramework("data/tweet.txt",
 				"data/label.txt", 3289);
 
-		int[] init = aframe.genRandomNum(0, 1878, 78);
+		int[] init = aframe.genRandomNum(0, 1877, 78);
 		Arrays.sort(init);
+		for (int i = 0; i < init.length; ++i) {
+			System.out.print(init[i] + " ");
+		}
+		System.out.println();
 		aframe.constuctTrain(init);
-		aframe.LSRidge(0.01, 100);
-		aframe.LSLap(L, 0.005, 0.01, 100);
-		System.out.println(aframe.getW1().length() + " " + aframe.getW2().length());
+		// System.out.println(aframe.getTrainX().columns() + " " +
+		// aframe.getTrainX().rows());
+
+		aframe.LSRidge(0.01, 100, 0.05);
+		aframe.LSLap(L, 0.005, 0.01, 100, 0.05);
+		System.out.println(aframe.getW1().length() + " "
+				+ aframe.getW2().length());
 		int[] ranking = aframe.selectScore("data/PageRank.txt", init, 1200);
-		System.out.println(ranking.length);
+		System.out.println("ranking length: " + ranking.length);
 
 		List<Integer> instances = new ArrayList<Integer>();
 		for (int i : init) {
@@ -256,25 +324,33 @@ public class ActiveFramework {
 		int index = 0;
 		while (instances.size() < 578 && index < ranking.length) {
 
-			int l1 = aframe.predict(aframe.getW1(), aframe.getTweets().get(ranking[index]));
-			int l2 = aframe.predict(aframe.getW2(), aframe.getTweets().get(ranking[index]));
+			int l1 = aframe.predict(aframe.getW1(),
+					aframe.getTweets().get(ranking[index]));
+			int l2 = aframe.predict(aframe.getW2(),
+					aframe.getTweets().get(ranking[index]));
 			if (l1 != l2) {
 				aframe.addOneInstance(ranking[index]);
 				instances.add(ranking[index]);
 			}
 			index++;
 		}
-		aframe.LSLap(L, 0.005, 0.01, 100);
-		System.out.println("--------------------------");
+		aframe.LSLap(L, 0.005, 0.01, 100, 0.05);
+		/*System.out.println("--------------------------");
 		for (int i = 0; i < aframe.getW2().length(); ++i) {
 			System.out.println(aframe.getW2().get(i));
 		}
 		System.out.println("--------------------------");
-		for (int i : init) {
-			System.out.println(i);
-		}
+
 		for (int i : ranking) {
 			System.out.println(i);
+		}*/
+		System.out.println("--------------------------");
+		double accuracy = aframe.evaluate(init, ranking);
+		System.out.println("The classification accuracy is: " + accuracy);
+		System.out.println("--------------------------");
+		Vector w = aframe.getW2();
+		for (int i = 0; i < w.length(); ++i) {
+			System.out.println(w.get(i));
 		}
 	}
 }
